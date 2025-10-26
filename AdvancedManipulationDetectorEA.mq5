@@ -13,6 +13,14 @@
 #include "AdvancedManipulationDetector_MT5.mqh"
 
 //+------------------------------------------------------------------+
+//| Global Değişkenler (MT5)                                         |
+//+------------------------------------------------------------------+
+CTrade      m_trade;        // MT5 İşlem sınıfı
+CPositionInfo m_position;   // MT5 Pozisyon bilgisi sınıfı
+MqlTick     last_tick;      // Son tick verisi
+bool BookAnomalyDetected = false; // Emir defteri anomali bayrağı
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()

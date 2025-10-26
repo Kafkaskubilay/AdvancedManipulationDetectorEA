@@ -17,14 +17,16 @@
 #include <Trade\PositionInfo.mqh>
 
 //+------------------------------------------------------------------+
-//| MT5'e Özel Global Değişkenler ve Sınıflar                        |
+//| MT5'e Özel Global Değişkenler ve Sınıflar (Ana Dosyada Tanımlanır)|
 //+------------------------------------------------------------------+
-CTrade      m_trade;        // MT5 İşlem sınıfı
-CPositionInfo m_position;   // MT5 Pozisyon bilgisi sınıfı
-MqlTick     last_tick;      // Son tick verisi
 
-// Emir defteri anomalisini OnTick'e iletmek için global değişken
-bool BookAnomalyDetected = false;
+// Emir defteri anomalisini OnTick'e iletmek için global değişken (HandleBookEvent'te kullanılır)
+extern bool BookAnomalyDetected;
+
+// CTrade ve CPositionInfo sınıfları için fonksiyon deklarasyonları
+// Bunlar ana dosyada tanımlanmalıdır.
+// CTrade& GetTrade();
+// CPositionInfo& GetPosition();
 
 //+------------------------------------------------------------------+
 //| MT5'e Özel Fonksiyonlar                                          |
@@ -118,7 +120,7 @@ bool OpenTrade(ENUM_ORDER_TYPE order_type, double lot, double price, int sl_pips
    request.magic    = MagicNumber;
    request.comment  = comment;
 
-   if (!m_trade.OrderSend(request, result))
+   if (!GetTrade().OrderSend(request, result))
    {
       Log("HATA: OrderSend başarısız oldu. Hata Kodu: " + EnumToString(result.retcode));
       if (result.retcode == TRADE_RETCODE_NO_CONNECTION || result.retcode == TRADE_RETCODE_SERVER_BUSY) ServerBusyMode = true;
@@ -134,51 +136,51 @@ void ManagePositions()
 {
    for (int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if (m_position.SelectByIndex(i) && m_position.Symbol() == Symbol() && m_position.Magic() == MagicNumber)
+      if (GetPosition().SelectByIndex(i) && GetPosition().Symbol() == Symbol() && GetPosition().Magic() == MagicNumber)
       {
-         double current_price = (m_position.PositionType() == POSITION_TYPE_BUY) ? GetBid() : GetAsk();
-         double open_price = m_position.PriceOpen();
-         double sl_price = m_position.StopLoss();
-         double tp_price = m_position.TakeProfit();
-         double pips = (m_position.PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / Point : (open_price - current_price) / Point;
+         double current_price = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? GetBid() : GetAsk();
+         double open_price = GetPosition().PriceOpen();
+         double sl_price = GetPosition().StopLoss();
+         double tp_price = GetPosition().TakeProfit();
+         double pips = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / Point : (open_price - current_price) / Point;
 
          // Süre kontrolü
-         if ((long)TimeCurrent() - (long)m_position.Time() >= MaxPositionDuration_s)
+         if ((long)TimeCurrent() - (long)GetPosition().Time() >= MaxPositionDuration_s)
          {
-            Log("POZİSYON KAPANIYOR (SÜRE DOLDU): ID: " + (string)m_position.Ticket());
-            m_trade.PositionClose(m_position.Ticket());
+            Log("POZİSYON KAPANIYOR (SÜRE DOLDU): ID: " + (string)GetPosition().Ticket());
+            GetTrade().PositionClose(GetPosition().Ticket());
             continue;
          }
 
          // Kısmi kapama
          if (PartialClosePips > 0 && pips >= PartialClosePips)
          {
-            double close_volume = NormalizeDouble(m_position.Volume() * PartialCloseVolume, 2);
+            double close_volume = NormalizeDouble(GetPosition().Volume() * PartialCloseVolume, 2);
             if (close_volume > 0)
             {
-               Log("POZİSYON KISMİ KAPANIYOR: ID: " + (string)m_position.Ticket() + ", Hacim: " + DoubleToString(close_volume, 2));
-               m_trade.PositionClose(m_position.Ticket(), close_volume);
+               Log("POZİSYON KISMİ KAPANIYOR: ID: " + (string)GetPosition().Ticket() + ", Hacim: " + DoubleToString(close_volume, 2));
+               GetTrade().PositionClose(GetPosition().Ticket(), close_volume);
             }
          }
 
          // Break-Even
          if (BreakEvenPips > 0 && pips >= BreakEvenPips && sl_price != open_price)
          {
-            Log("POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)m_position.Ticket());
-            m_trade.PositionModify(m_position.Ticket(), open_price, tp_price);
+            Log("POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)GetPosition().Ticket());
+            GetTrade().PositionModify(GetPosition().Ticket(), open_price, tp_price);
          }
 
          // Trailing Stop
          if (TrailingStopPips > 0 && pips >= TrailingStopPips)
          {
             double new_sl = 0.0;
-            if (m_position.PositionType() == POSITION_TYPE_BUY)
+            if (GetPosition().PositionType() == POSITION_TYPE_BUY)
             {
                new_sl = current_price - TrailingStopPips * Point;
                if (new_sl > sl_price)
                {
-                  Log("TRAILING STOP GÜNCELLENDİ (BUY): ID: " + (string)m_position.Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
-                  m_trade.PositionModify(m_position.Ticket(), new_sl, tp_price);
+                  Log("TRAILING STOP GÜNCELLENDİ (BUY): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
+                  GetTrade().PositionModify(GetPosition().Ticket(), new_sl, tp_price);
                }
             }
             else // SELL
@@ -186,8 +188,8 @@ void ManagePositions()
                new_sl = current_price + TrailingStopPips * Point;
                if (new_sl < sl_price)
                {
-                  Log("TRAILING STOP GÜNCELLENDİ (SELL): ID: " + (string)m_position.Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
-                  m_trade.PositionModify(m_position.Ticket(), new_sl, tp_price);
+                  Log("TRAILING STOP GÜNCELLENDİ (SELL): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
+                  GetTrade().PositionModify(GetPosition().Ticket(), new_sl, tp_price);
                }
             }
          }
@@ -236,11 +238,18 @@ void UpdateTradeScore(string symbol, double profit, bool is_win)
 //| MT5 Ana Olay Fonksiyonları                                       |
 //+------------------------------------------------------------------+
 
+// Ana dosyada tanımlanan global değişkenlere erişim için
+extern CTrade m_trade;
+extern CPositionInfo m_position;
+
+CTrade& GetTrade() { return m_trade; }
+CPositionInfo& GetPosition() { return m_position; }
+
 int OnInit_MT5()
 {
-   m_trade.SetExpertMagicNumber(MagicNumber);
-   m_trade.SetMarginMode();
-   m_trade.SetTypeFillingBySymbol(Symbol());
+   GetTrade().SetExpertMagicNumber(MagicNumber);
+   GetTrade().SetMarginMode();
+   GetTrade().SetTypeFillingBySymbol(Symbol());
    SymbolSelect(Symbol(), true);
    // Emir defteri olaylarını almak için abone ol
    MarketBookAdd(Symbol());
