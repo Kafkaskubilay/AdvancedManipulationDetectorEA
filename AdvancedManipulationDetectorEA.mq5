@@ -41,7 +41,7 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnBookEvent(const string symbol, const MqlBookInfo &book[])
 {
-   OnBookEvent(symbol, book);
+   HandleBookEvent(symbol, book);
 }
 //+------------------------------------------------------------------+
 

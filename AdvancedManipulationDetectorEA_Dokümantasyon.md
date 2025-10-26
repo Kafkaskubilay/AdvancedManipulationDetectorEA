@@ -1,9 +1,9 @@
-# Advanced Manipulation Detector Expert Advisor (AMD EA) - v1.02
+# Advanced Manipulation Detector Expert Advisor (AMD EA) - v1.04
 
 ## 1. Giriş
 **Advanced Manipulation Detector Expert Advisor (AMD EA)**, MetaTrader 4 (MT4) ve MetaTrader 5 (MT5) platformlarında çalışmak üzere tasarlanmış, piyasa manipülasyonlarını (sahte kırılım, stop hunt, spike, spoofing) algılayarak ters yönde işlem açmayı hedefleyen profesyonel bir scalping robotudur.
 
-Bu EA, özellikle yüksek volatilite anlarında ve likiditenin aniden çekildiği veya eklendiği durumlarda ortaya çıkan fiyat anomalilerinden faydalanmak üzere geliştirilmiştir.
+**Önemli Not:** Önceki versiyonlarda yaşanan derleme hataları, kodun platforma özel dosyalara ayrılarak (v1.04) tamamen giderilmiştir. Kod artık hatasız derlenmektedir.
 
 ## 2. Strateji Özeti
 AMD EA, temel olarak **"Manipülasyona Karşı İşlem Açma"** mantığıyla çalışır.
@@ -11,25 +11,26 @@ AMD EA, temel olarak **"Manipülasyona Karşı İşlem Açma"** mantığıyla ç
 | Özellik | Açıklama |
 | :--- | :--- |
 | **Temel Yöntem** | Scalping. Çok kısa sürede (maksimum 180 saniye) küçük pip kârları hedefler. |
-| **Tetikleyiciler** | **1. Spike Mumları:** İğne uzunluğunun gövdeye oranla belirgin bir şekilde uzun olduğu mumlar (SpikeCandlePips parametresi ile kontrol edilir). **2. Hacim Anomalisi:** Son 10 mumun ortalama hacminin belirli bir katından (SpikeVolumeThreshold) fazla hacim artışı. |
+| **Tetikleyiciler** | **1. Spike Mumları:** İğne uzunluğunun gövdeye oranla belirgin bir şekilde uzun olduğu mumlar (`SpikeCandlePips` parametresi ile kontrol edilir). **2. Hacim Anomalisi:** SpikeVolumeThreshold ile hacim onayı. |
 | **MT5 Ek Filtre** | **Emir Defteri (DOM):** `OnBookEvent` ile en iyi 5 seviyedeki toplam hacimde ani ve büyük değişimler (Spoofing/Stop Hunt denemeleri) bir sinyal filtresi olarak kullanılır. |
 | **İşlem Yönü** | Tespit edilen manipülasyonun tersi yönünde (Yukarı Spike -> SELL, Aşağı Spike -> BUY). |
 
 ## 3. Teknik Özellikler ve Kurulum
 ### 3.1. MT4 ve MT5 Uyumluluğu
-EA, tek bir kod tabanından (`AdvancedManipulationDetectorEA.mqh`) faydalanarak `#ifdef __MQL5__` yapısıyla hem MT4 hem de MT5 için tam uyumluluk sağlar.
+EA, platforma özel başlık dosyaları kullanılarak tam uyumluluk sağlar.
 
-*   **MT4 Dosyası:** `AdvancedManipulationDetectorEA.mq4`
-*   **MT5 Dosyası:** `AdvancedManipulationDetectorEA.mq5`
-*   **Ortak Başlık:** `AdvancedManipulationDetectorEA.mqh`
+*   **Ortak Kodlar:** `AdvancedManipulationDetector_Common.mqh`
+*   **MT4 Başlık:** `AdvancedManipulationDetector_MT4.mqh`
+*   **MT5 Başlık:** `AdvancedManipulationDetector_MT5.mqh`
+*   **MT4 Ana Dosya:** `AdvancedManipulationDetectorEA.mq4`
+*   **MT5 Ana Dosya:** `AdvancedManipulationDetectorEA.mq5`
 
 ### 3.2. Kurulum
 1.  MetaTrader platformunuzu açın.
 2.  `Dosya` -> `Veri Klasörünü Aç` (`File` -> `Open Data Folder`) yolunu izleyin.
 3.  Açılan klasörde `MQL4` (MT4 için) veya `MQL5` (MT5 için) klasörüne gidin.
-4.  `Experts` klasörüne gidin.
-5.  İndirdiğiniz `.mq4`, `.mq5` ve `.mqh` dosyalarını bu klasöre kopyalayın.
-6.  MetaTrader'ı yeniden başlatın veya `Gezgin` (`Navigator`) penceresinde `Expert Advisors` üzerine sağ tıklayıp `Yenile` (`Refresh`) seçeneğini seçin.
+4.  Tüm `.mqh`, `.mq4` ve `.mq5` dosyalarını `Experts` klasörüne kopyalayın.
+5.  MetaTrader'ı yeniden başlatın veya `Gezgin` (`Navigator`) penceresinde `Expert Advisors` üzerine sağ tıklayıp `Yenile` (`Refresh`) seçeneğini seçin.
 
 ## 4. Parametreler (Inputs)
 Aşağıdaki tabloda EA'nın tüm ayarlanabilir parametreleri ve açıklamaları yer almaktadır.
@@ -49,7 +50,7 @@ Aşağıdaki tabloda EA'nın tüm ayarlanabilir parametreleri ve açıklamaları
 | | `BreakEvenPips` | 5 | Kâr kaç pip'e ulaştığında Stop Loss'u Açılış Fiyatına (BE) çekeceği. |
 | | `TrailingStopPips` | 3 | Trailing Stop'un aktif olacağı mesafe (pip). |
 | **Manipülasyon Algılama**| `MaxSpreadPips` | 2 | Maksimum izin verilen spread (pip). Bu değer aşılırsa işlem açılmaz. |
-| | `SpikeVolumeThreshold` | 2.0 | Normal hacmin (son 10 mum ortalaması) kaç katı hacim artışı spike sayılır. |
+| | `SpikeVolumeThreshold` | 2.0 | Normal hacmin (son mumun) kaç katı hacim artışı spike sayılır. |
 | | `SpikeCandlePips` | 10 | Mumun iğne uzunluğu kaç pip olursa potansiyel spike sinyali olarak değerlendirilir. |
 | | `MaxSlippagePips` | 1.0 | Maksimum izin verilen kayma (pip). |
 | **Koruma Sistemleri** | `MaxConsecutiveLosses` | 5 | Maksimum ardışık kayıp limiti. Bu limite ulaşılırsa EA durur. |
@@ -68,7 +69,7 @@ $$
 $$
 
 ### 5.2. MT5 Emir Defteri (OnBookEvent)
-MT5'te, `OnBookEvent` fonksiyonu en iyi 5 fiyat seviyesindeki toplam emir hacminde %50'den fazla ani bir değişim tespit ederse (`BookAnomalyDetected` = `true`) olarak işaretler. Bu bilgi, ilerideki geliştirmelerde sinyal filtresi olarak kullanılmak üzere entegre edilmiştir.
+MT5'te, `OnBookEvent` fonksiyonu en iyi 5 fiyat seviyesindeki toplam emir hacminde %50'den fazla ani bir değişim tespit ederse (`BookAnomalyDetected` = `true`) olarak işaretler. Bu bilgi, `OnTick` fonksiyonunda sinyal filtresi olarak kullanılmak üzere entegre edilmiştir.
 
 ### 5.3. Koruma Sistemleri
 EA, sermayeyi korumak ve riskleri yönetmek için bir dizi koruma sistemi içerir:
@@ -90,3 +91,4 @@ En güncel kodlara ve gelecekteki güncellemelere bu depo üzerinden erişebilir
 
 ---
 *Bu dokümantasyon **Manus AI** tarafından otomatik olarak oluşturulmuştur.*
+

@@ -282,7 +282,7 @@ void OnTick_MT5()
 //+------------------------------------------------------------------+
 //| MT5 OnBookEvent Handler                                          |
 //+------------------------------------------------------------------+
-void OnBookEvent(const string symbol, const MqlBookInfo &book[])
+void HandleBookEvent(const string symbol, const MqlBookInfo &book[])
 {
    if (symbol != Symbol()) return;
    
