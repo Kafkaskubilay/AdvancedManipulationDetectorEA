@@ -17,16 +17,15 @@
 #include "AdvancedManipulationDetector_Common.mqh"
 
 //+------------------------------------------------------------------+
-//| MT5'e Özel Global Değişkenler ve Sınıflar (Ana Dosyada Tanımlanır)|
+//| MT5'e Özel Global Değişkenler (Ana Dosyada Tanımlanır)           |
 //+------------------------------------------------------------------+
-
-// Emir defteri anomalisini OnTick'e iletmek için global değişken (HandleBookEvent'te kullanılır)
-extern bool BookAnomalyDetected;
 
 // Ana dosyada tanımlanan global değişkenlere erişim için
 extern CTrade m_trade;
 extern CPositionInfo m_position;
+extern bool BookAnomalyDetected;
 
+// Global değişkenlere erişim sağlayan yardımcı fonksiyonlar
 CTrade& GetTrade() { return m_trade; }
 CPositionInfo& GetPosition() { return m_position; }
 
@@ -61,9 +60,11 @@ double CalculateLotSize(string symbol, int sl_pips)
    double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
    double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
    
-   double sl_distance_points = sl_pips * point;
+   double pip_size = point * (SymbolInfoInteger(symbol, SYMBOL_DIGITS) == 5 || SymbolInfoInteger(symbol, SYMBOL_DIGITS) == 3 ? 10 : 1);
+   double sl_distance_points = sl_pips * pip_size;
    
-   // Lot hesaplama formülü
+   // Lot hesaplama formülü: risk_amount / (SL_mesafesi * pip_değeri)
+   // MT5'te daha doğru: risk_amount / (SL_mesafesi_USD)
    double lot = risk_amount / (sl_distance_points / tick_size * tick_value);
 
    double min_lot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -89,8 +90,9 @@ bool OpenTrade(string symbol, ENUM_ORDER_TYPE order_type, double lot, double pri
 
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
    int digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double pip_size = point * (digits == 5 || digits == 3 ? 10 : 1);
    
-   double current_spread_pips = (GetAsk(symbol) - GetBid(symbol)) / point;
+   double current_spread_pips = (GetAsk(symbol) - GetBid(symbol)) / pip_size;
    if (current_spread_pips > MaxSpreadPips)
    {
       Log(symbol, "İŞLEM İPTAL: Spread çok yüksek (" + DoubleToString(current_spread_pips, 1) + " Pips). Max limit: " + (string)MaxSpreadPips + " Pips.");
@@ -109,16 +111,16 @@ bool OpenTrade(string symbol, ENUM_ORDER_TYPE order_type, double lot, double pri
    
    if (order_type == ORDER_TYPE_BUY)
    {
-      request.sl = NormalizeDouble(price - sl_pips * point, digits);
-      request.tp = NormalizeDouble(price + tp_pips * point, digits);
+      request.sl = NormalizeDouble(price - sl_pips * pip_size, digits);
+      request.tp = NormalizeDouble(price + tp_pips * pip_size, digits);
    }
    else
    {
-      request.sl = NormalizeDouble(price + sl_pips * point, digits);
-      request.tp = NormalizeDouble(price - tp_pips * point, digits);
+      request.sl = NormalizeDouble(price + sl_pips * pip_size, digits);
+      request.tp = NormalizeDouble(price - tp_pips * pip_size, digits);
    }
    
-   request.deviation= (int)(MaxSlippagePips / point);
+   request.deviation= (int)(MaxSlippagePips * pip_size / point); // Slippage Point cinsinden olmalı
    request.magic    = MagicNumber;
    request.comment  = comment;
 
@@ -170,6 +172,7 @@ void ManagePositions(string symbol)
 {
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
    int digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double pip_size = point * (digits == 5 || digits == 3 ? 10 : 1);
    
    for (int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -179,7 +182,7 @@ void ManagePositions(string symbol)
          double open_price = GetPosition().PriceOpen();
          double sl_price = GetPosition().StopLoss();
          double tp_price = GetPosition().TakeProfit();
-         double pips = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / point : (open_price - current_price) / point;
+         double pips = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / pip_size : (open_price - current_price) / pip_size;
 
          // Süre kontrolü
          if ((long)TimeCurrent() - (long)GetPosition().Time() >= MaxPositionDuration_s)
@@ -193,7 +196,7 @@ void ManagePositions(string symbol)
          if (PartialClosePips > 0 && pips >= PartialClosePips)
          {
             double close_volume = NormalizeDouble(GetPosition().Volume() * PartialCloseVolume, 2);
-            if (close_volume > 0)
+            if (close_volume > 0 && close_volume < GetPosition().Volume())
             {
                Log(symbol, "POZİSYON KISMİ KAPANIYOR: ID: " + (string)GetPosition().Ticket() + ", Hacim: " + DoubleToString(close_volume, 2));
                GetTrade().PositionClose(GetPosition().Ticket(), close_volume);
@@ -201,10 +204,17 @@ void ManagePositions(string symbol)
          }
 
          // Break-Even
-         if (BreakEvenPips > 0 && pips >= BreakEvenPips && sl_price != open_price)
+         if (BreakEvenPips > 0 && pips >= BreakEvenPips && sl_price < open_price) // Sadece SL, Open Price'ın altındaysa (BUY için)
          {
-            Log(symbol, "POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)GetPosition().Ticket());
-            GetTrade().PositionModify(GetPosition().Ticket(), open_price, tp_price);
+            double new_sl = open_price;
+            if (GetPosition().PositionType() == POSITION_TYPE_BUY) new_sl = NormalizeDouble(open_price + 1 * point, digits); // 1 point kâr
+            else new_sl = NormalizeDouble(open_price - 1 * point, digits); // 1 point kâr
+
+            if (sl_price != new_sl)
+            {
+               Log(symbol, "POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)GetPosition().Ticket());
+               GetTrade().PositionModify(GetPosition().Ticket(), new_sl, tp_price);
+            }
          }
 
          // Trailing Stop
@@ -213,7 +223,7 @@ void ManagePositions(string symbol)
             double new_sl = 0.0;
             if (GetPosition().PositionType() == POSITION_TYPE_BUY)
             {
-               new_sl = current_price - TrailingStopPips * point;
+               new_sl = current_price - TrailingStopPips * pip_size;
                if (new_sl > sl_price)
                {
                   Log(symbol, "TRAILING STOP GÜNCELLENDİ (BUY): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, digits));
@@ -222,7 +232,7 @@ void ManagePositions(string symbol)
             }
             else // SELL
             {
-               new_sl = current_price + TrailingStopPips * point;
+               new_sl = current_price + TrailingStopPips * pip_size;
                if (new_sl < sl_price)
                {
                   Log(symbol, "TRAILING STOP GÜNCELLENDİ (SELL): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, digits));
@@ -237,9 +247,9 @@ void ManagePositions(string symbol)
 //--- MT5 Emir Defteri Anomali Tespiti
 void HandleBookEvent(string symbol, const MqlBookInfo &book[])
 {
-   if (symbol != Symbol()) return;
+   // Sadece ana grafiğin sembolü için değil, tüm abone olunan semboller için çalışır
    
-   // Emir defteri manipülasyonu (Spoofing/Stop Hunt) tespiti
+   // Basit anomali tespiti: Bir taraftaki hacim, diğerinin 5 katından fazlaysa
    double current_bid_volume = 0;
    double current_ask_volume = 0;
    
@@ -256,8 +266,9 @@ void HandleBookEvent(string symbol, const MqlBookInfo &book[])
       }
    }
    
-   // Basit anomali tespiti: Bir taraftaki hacim, diğerinin 5 katından fazlaysa
-   if (current_bid_volume > current_ask_volume * 5 || current_ask_volume > current_bid_volume * 5)
+   // Anomali tespiti: Bid veya Ask hacminin toplam hacmin %70'inden fazlası olması
+   double total_volume = current_bid_volume + current_ask_volume;
+   if (total_volume > 0 && (current_bid_volume / total_volume > 0.7 || current_ask_volume / total_volume > 0.7))
    {
       BookAnomalyDetected = true;
       Log(symbol, "DOM ANOMALİSİ TESPİT EDİLDİ: Bid Hacmi: " + DoubleToString(current_bid_volume, 0) + ", Ask Hacmi: " + DoubleToString(current_ask_volume, 0));
@@ -273,30 +284,28 @@ void HandleBookEvent(string symbol, const MqlBookInfo &book[])
 int OnInit_MT5()
 {
    GetTrade().SetExpertMagicNumber(MagicNumber);
-   GetTrade().SetMarginMode();
    
-   string symbols[];
-   int count = StringSplit(Symbols_List, ',', symbols);
+   // Symbols_List'i ayrıştır
+   g_symbol_count = StringSplit(Symbols_List, ',', g_symbols);
+   ArrayResize(SymbolScores, g_symbol_count);
    
-   for (int i = 0; i < count; i++)
+   // Tüm sembollere abone ol ve emir defteri olaylarını almak için abone ol
+   for (int i = 0; i < g_symbol_count; i++)
    {
-      SymbolSelect(symbols[i], true);
-      // Emir defteri olaylarını almak için abone ol
-      MarketBookAdd(symbols[i]);
+      SymbolSelect(g_symbols[i], true);
+      MarketBookAdd(g_symbols[i]);
    }
    
-   Log("", "EA Başlatıldı (MT5): " + Expert_ID + " v" + (string)Version());
+   Log("", "EA Başlatıldı (MT5): " + (string)MagicNumber + " v" + (string)Version());
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit_MT5(const int reason)
 {
-   string symbols[];
-   int count = StringSplit(Symbols_List, ',', symbols);
-   
-   for (int i = 0; i < count; i++)
+   // Tüm sembollerin emir defteri aboneliğini kaldır
+   for (int i = 0; i < g_symbol_count; i++)
    {
-      MarketBookRelease(symbols[i]);
+      MarketBookRelease(g_symbols[i]);
    }
    
    Log("", "EA Durduruldu (MT5). Neden: " + (string)reason);
@@ -304,17 +313,16 @@ void OnDeinit_MT5(const int reason)
 
 void OnTick_MT5()
 {
-   if (!IsTradingTime() || ServerBusyMode) return;
+   if (!IsTradingTime() || IsSwapNight() || IsMaxLossReached() || ServerBusyMode) return;
 
-   string symbols[];
-   int count = StringSplit(Symbols_List, ',', symbols);
-   
-   for (int i = 0; i < count; i++)
+   for (int i = 0; i < g_symbol_count; i++)
    {
-      string symbol = symbols[i];
+      string symbol = g_symbols[i];
       
       // Sembolü seç
       if (!SymbolSelect(symbol, true)) continue;
+      
+      // Spread kontrolü (OpenTrade içinde yapılacak)
       
       ManagePositions(symbol);
 
@@ -323,17 +331,12 @@ void OnTick_MT5()
 
       ENUM_ORDER_TYPE signal = DetectManipulationSignal(symbol);
       
-      // MT5'e özel 3. filtre: DOM Anomali Onayı
-      if (signal != (ENUM_ORDER_TYPE)-1 && BookAnomalyDetected)
+      // Sinyal varsa işlem aç
+      if (signal != (ENUM_ORDER_TYPE)-1)
       {
-         Log(symbol, "GÜÇLÜ SİNYAL ONAYI: DOM Anomali filtresi de geçti.");
          double lot = CalculateLotSize(symbol, StopLossPips);
          double price = (signal == ORDER_TYPE_BUY) ? GetAsk(symbol) : GetBid(symbol);
          OpenTrade(symbol, signal, lot, price, StopLossPips, TakeProfitPips, "AMD Signal");
-      }
-      else if (signal != (ENUM_ORDER_TYPE)-1)
-      {
-         Log(symbol, "SİNYAL ALINDI, ancak DOM Anomali filtresi geçilemedi. İşlem açılmadı.");
       }
    }
 }
