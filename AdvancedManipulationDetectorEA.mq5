@@ -1,22 +1,23 @@
 //+------------------------------------------------------------------+
-//|                                AdvancedManipulationDetectorEA.mq5|
-//|                      Copyright 2024, Manus AI                     |
-//|                                  https://manus.im                 |
+//|                 AdvancedManipulationDetectorEA.mq5               |
+//|                      Copyright 2024, Manus AI                    |
+//|                                  https://manus.im                |
+//| MT5 Ana Expert Advisor Dosyası                                   |
 //+------------------------------------------------------------------+
 #property copyright "Manus AI"
 #property link      "https://manus.im"
-#property version   "1.02"
-#property description "MetaTrader 5 için Gelişmiş Manipülasyon Algılayıcı Expert Advisor"
+#property version   "1.04"
+#property strict
 
-// Ortak kodları ve ayarları içeren başlık dosyası
-#include "AdvancedManipulationDetectorEA.mqh"
+// MT5'e özel implementasyonu dahil et
+#include "AdvancedManipulationDetector_MT5.mqh"
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   return OnInit_Common();
+   return OnInit_MT5();
 }
 
 //+------------------------------------------------------------------+
@@ -24,7 +25,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   OnDeinit_Common(reason);
+   OnDeinit_MT5(reason);
 }
 
 //+------------------------------------------------------------------+
@@ -32,17 +33,15 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   OnTick_Common();
+   OnTick_MT5();
 }
 
 //+------------------------------------------------------------------+
-//| Expert book event function                                       |
+//| Expert BookEvent function                                        |
 //+------------------------------------------------------------------+
-#ifdef __MQL5__
 void OnBookEvent(const string symbol, const MqlBookInfo &book[])
 {
-   // Bu fonksiyonun mantığı, gelecekteki geliştirmeler için .mqh dosyası içinde yer alabilir.
-   // Şimdilik boş bırakılmıştır.
+   OnBookEvent(symbol, book);
 }
-#endif
+//+------------------------------------------------------------------+
 

@@ -1,30 +1,31 @@
 //+------------------------------------------------------------------+
-//|                                AdvancedManipulationDetectorEA.mq4|
-//|                      Copyright 2024, Manus AI                     |
-//|                                  https://manus.im                 |
+//|                 AdvancedManipulationDetectorEA.mq4               |
+//|                      Copyright 2024, Manus AI                    |
+//|                                  https://manus.im                |
+//| MT4 Ana Expert Advisor Dosyası                                   |
 //+------------------------------------------------------------------+
 #property copyright "Manus AI"
 #property link      "https://manus.im"
-#property version   "1.02"
-#property description "MetaTrader 4 için Gelişmiş Manipülasyon Algılayıcı Expert Advisor"
+#property version   "1.04"
+#property strict
 
-// Ortak kodları ve ayarları içeren başlık dosyası
-#include "AdvancedManipulationDetectorEA.mqh"
+// MT4'e özel implementasyonu dahil et
+#include "AdvancedManipulationDetector_MT4.mqh"
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   return OnInit_Common();
+   return OnInit_MT4();
 }
 
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
-void OnDeinit(const int reason)
+void OnDeinit()
 {
-   OnDeinit_Common(reason);
+   OnDeinit_MT4(UninitializeReason());
 }
 
 //+------------------------------------------------------------------+
@@ -32,6 +33,7 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   OnTick_Common();
+   OnTick_MT4();
 }
+//+------------------------------------------------------------------+
 
