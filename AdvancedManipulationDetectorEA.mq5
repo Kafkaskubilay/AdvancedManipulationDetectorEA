@@ -2,11 +2,11 @@
 //|                 AdvancedManipulationDetectorEA.mq5               |
 //|                      Copyright 2024, Manus AI                    |
 //|                                  https://manus.im                |
-//| MT5 Ana Expert Advisor Dosyası                                   |
+//| Multi-Symbol Expert Advisor (v1.07)                              |
 //+------------------------------------------------------------------+
 #property copyright "Manus AI"
 #property link      "https://manus.im"
-#property version   "1.04"
+#property version   "1.07"
 #property strict
 
 // MT5'e özel implementasyonu dahil et

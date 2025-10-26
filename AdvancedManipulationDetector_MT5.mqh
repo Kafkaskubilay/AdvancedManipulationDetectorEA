@@ -2,19 +2,19 @@
 //|                 AdvancedManipulationDetector_MT5.mqh             |
 //|                      Copyright 2024, Manus AI                    |
 //|                                  https://manus.im                |
-//| MT5 Platformuna Özel Fonksiyonlar ve Implementasyonlar           |
+//| MT5 Platformuna Özel Fonksiyonlar ve Implementasyonlar (v1.07)   |
 //+------------------------------------------------------------------+
 #property copyright "Manus AI"
 #property link      "https://manus.im"
-#property version   "1.04"
+#property version   "1.07"
 #property strict
-
-// Ortak kodları dahil et
-#include "AdvancedManipulationDetector_Common.mqh"
 
 // MT5 Gerekli Kütüphaneler
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
+
+// Ortak kodları dahil et
+#include "AdvancedManipulationDetector_Common.mqh"
 
 //+------------------------------------------------------------------+
 //| MT5'e Özel Global Değişkenler ve Sınıflar (Ana Dosyada Tanımlanır)|
@@ -23,131 +23,168 @@
 // Emir defteri anomalisini OnTick'e iletmek için global değişken (HandleBookEvent'te kullanılır)
 extern bool BookAnomalyDetected;
 
-// CTrade ve CPositionInfo sınıfları için fonksiyon deklarasyonları
-// Bunlar ana dosyada tanımlanmalıdır.
-// CTrade& GetTrade();
-// CPositionInfo& GetPosition();
+// Ana dosyada tanımlanan global değişkenlere erişim için
+extern CTrade m_trade;
+extern CPositionInfo m_position;
+
+CTrade& GetTrade() { return m_trade; }
+CPositionInfo& GetPosition() { return m_position; }
 
 //+------------------------------------------------------------------+
 //| MT5'e Özel Fonksiyonlar                                          |
 //+------------------------------------------------------------------+
 
 //--- Platformdan bağımsız fiyat alma (MT5)
-double GetAsk()
+double GetAsk(string symbol)
 {
-   return SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+   double ask;
+   SymbolInfoDouble(symbol, SYMBOL_ASK, ask);
+   return ask;
 }
 
-double GetBid()
+double GetBid(string symbol)
 {
-   return SymbolInfoDouble(Symbol(), SYMBOL_BID);
+   double bid;
+   SymbolInfoDouble(symbol, SYMBOL_BID, bid);
+   return bid;
 }
 
 //--- Lot büyüklüğünü hesaplama (MT5)
-double CalculateLotSize(int sl_pips)
+double CalculateLotSize(string symbol, int sl_pips)
 {
    if (RiskPercent <= 0.0) return FixedLotSize;
 
-   double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double risk_amount = account_balance * (RiskPercent / 100.0);
-   double sl_distance_points = sl_pips * Point;
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double risk_amount = equity * (RiskPercent / 100.0);
+   
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tick_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   double sl_distance_points = sl_pips * point;
+   
+   // Lot hesaplama formülü
+   double lot = risk_amount / (sl_distance_points / tick_size * tick_value);
 
-   double tick_value = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_VALUE);
-   double tick_size = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_SIZE);
-   if (tick_size == 0) return 0.01; // Bölme hatasını önle
-
-   double value_per_point = tick_value / tick_size;
-   double lot = risk_amount / (sl_distance_points * value_per_point);
-
-   double lot_step = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_STEP);
-   lot = MathFloor(lot / lot_step) * lot_step;
-
-   double min_lot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MIN);
-   double max_lot = SymbolInfoDouble(Symbol(), SYMBOL_VOLUME_MAX);
+   double min_lot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double max_lot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double step_lot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   
+   if (step_lot > 0) lot = MathRound(lot / step_lot) * step_lot;
+   
    lot = MathMax(min_lot, MathMin(max_lot, lot));
 
-   Log("Lot Hesaplandı (MT5): Risk: " + DoubleToString(risk_amount, 2) + ", SL Pips: " + (string)sl_pips + ", Lot: " + DoubleToString(lot, 2));
+   Log(symbol, "Lot Hesaplandı (MT5): Risk: " + DoubleToString(risk_amount, 2) + ", SL Pips: " + (string)sl_pips + ", Lot: " + DoubleToString(lot, 2));
    return lot;
 }
 
-//--- İşlem açma fonksiyonu (MT5)
-bool OpenTrade(ENUM_ORDER_TYPE order_type, double lot, double price, int sl_pips, int tp_pips, string comment)
+//--- İşlem açma fonksiyonu (MT5) - Retry eklendi
+bool OpenTrade(string symbol, ENUM_ORDER_TYPE order_type, double lot, double price, int sl_pips, int tp_pips, string comment)
 {
    if (lot <= 0) 
    {
-      Log("HATA: Lot büyüklüğü sıfır veya negatif. İşlem açılamadı.");
+      Log(symbol, "HATA: Lot büyüklüğü sıfır veya negatif. İşlem açılamadı.");
       return false;
    }
 
-   double current_spread_pips = (GetAsk() - GetBid()) / Point;
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   
+   double current_spread_pips = (GetAsk(symbol) - GetBid(symbol)) / point;
    if (current_spread_pips > MaxSpreadPips)
    {
-      Log("İŞLEM İPTAL: Spread çok yüksek (" + DoubleToString(current_spread_pips, 1) + " Pips). Max limit: " + (string)MaxSpreadPips + " Pips.");
+      Log(symbol, "İŞLEM İPTAL: Spread çok yüksek (" + DoubleToString(current_spread_pips, 1) + " Pips). Max limit: " + (string)MaxSpreadPips + " Pips.");
       return false;
    }
-
-   double sl_price = 0.0;
-   double tp_price = 0.0;
-
+   
+   MqlTradeRequest request;
+   MqlTradeResult result;
+   
+   ZeroMemory(request);
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = symbol;
+   request.volume = lot;
+   request.type   = (order_type == ORDER_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   request.price  = price;
+   
    if (order_type == ORDER_TYPE_BUY)
    {
-      sl_price = price - sl_pips * Point;
-      tp_price = price + tp_pips * Point;
+      request.sl = NormalizeDouble(price - sl_pips * point, digits);
+      request.tp = NormalizeDouble(price + tp_pips * point, digits);
    }
-   else if (order_type == ORDER_TYPE_SELL)
+   else
    {
-      sl_price = price + sl_pips * Point;
-      tp_price = price - tp_pips * Point;
+      request.sl = NormalizeDouble(price + sl_pips * point, digits);
+      request.tp = NormalizeDouble(price - tp_pips * point, digits);
    }
-
-   sl_price = NormalizeDouble(sl_price, Digits);
-   tp_price = NormalizeDouble(tp_price, Digits);
-
-   string order_type_str = (order_type == ORDER_TYPE_BUY) ? "BUY" : "SELL";
-   Log("İşlem Açılıyor (MT5): " + order_type_str + ", Lot: " + DoubleToString(lot, 2) + ", Fiyat: " + DoubleToString(price, Digits) + ", SL: " + DoubleToString(sl_price, Digits) + ", TP: " + DoubleToString(tp_price, Digits));
-
-   MqlTradeRequest request={0};
-   MqlTradeResult  result={0};
-
-   request.action   = TRADE_ACTION_DEAL;
-   request.symbol   = Symbol();
-   request.volume   = lot;
-   request.type     = (ENUM_ORDER_TYPE)order_type; // MT5'te ENUM_ORDER_TYPE'a cast etme
-   request.price    = price;
-   request.sl       = sl_price;
-   request.tp       = tp_price;
-   request.deviation= (int)(MaxSlippagePips * Point);
+   
+   request.deviation= (int)(MaxSlippagePips / point);
    request.magic    = MagicNumber;
    request.comment  = comment;
 
-   if (!GetTrade().OrderSend(request, result))
+   string order_type_str = (order_type == ORDER_TYPE_BUY) ? "BUY" : "SELL";
+   Log(symbol, "İşlem Açılıyor (MT5): " + order_type_str + ", Lot: " + DoubleToString(lot, 2) + ", Fiyat: " + DoubleToString(price, digits) + ", SL: " + DoubleToString(request.sl, digits) + ", TP: " + DoubleToString(request.tp, digits));
+
+   int retries = 3;
+   while (retries > 0)
    {
-      Log("HATA: OrderSend başarısız oldu. Hata Kodu: " + EnumToString(result.retcode));
-      if (result.retcode == TRADE_RETCODE_NO_CONNECTION || result.retcode == TRADE_RETCODE_SERVER_BUSY) ServerBusyMode = true;
-      return false;
+      if (GetTrade().OrderSend(request, result))
+      {
+         if (result.retcode == TRADE_RETCODE_DONE)
+         {
+            if (ServerBusyMode) ServerBusyMode = false;
+            Log(symbol, "İŞLEM BAŞARILI (MT5): Ticket: " + (string)result.order);
+            return true;
+         }
+         else
+         {
+            Log(symbol, "HATA: OrderSend başarısız oldu. Hata Kodu: " + EnumToString((ENUM_TRADE_RETCODE)result.retcode) + ". Tekrar deneniyor... (" + (string)retries + " kaldı)");
+            
+            if (result.retcode == TRADE_RETCODE_REQUOTE || result.retcode == TRADE_RETCODE_TRADE_CONTEXT_BUSY)
+            {
+               retries--;
+               Sleep(100); // Kısa bekleme
+               request.price = (order_type == ORDER_TYPE_BUY) ? GetAsk(symbol) : GetBid(symbol); // Yeni fiyat al
+               continue;
+            }
+            
+            if (result.retcode == TRADE_RETCODE_SERVER_BUSY)
+            {
+               ServerBusyMode = true;
+               Log(symbol, "SUNUCU MEŞGUL. Bekleme moduna geçiliyor.");
+               return false;
+            }
+            
+            // Diğer hatalar için çık
+            break;
+         }
+      }
+      retries--;
    }
-   if (ServerBusyMode) ServerBusyMode = false;
-   Log("İŞLEM BAŞARILI (MT5): Pozisyon ID: " + (string)result.deal + ", Sonuç Kodu: " + EnumToString(result.retcode));
-   return true;
+   
+   return false;
 }
 
 //--- Pozisyon yönetimi (MT5)
-void ManagePositions()
+void ManagePositions(string symbol)
 {
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   
    for (int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if (GetPosition().SelectByIndex(i) && GetPosition().Symbol() == Symbol() && GetPosition().Magic() == MagicNumber)
+      if (GetPosition().SelectByIndex(i) && GetPosition().Symbol() == symbol && GetPosition().Magic() == MagicNumber)
       {
-         double current_price = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? GetBid() : GetAsk();
+         double current_price = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? GetBid(symbol) : GetAsk(symbol);
          double open_price = GetPosition().PriceOpen();
          double sl_price = GetPosition().StopLoss();
          double tp_price = GetPosition().TakeProfit();
-         double pips = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / Point : (open_price - current_price) / Point;
+         double pips = (GetPosition().PositionType() == POSITION_TYPE_BUY) ? (current_price - open_price) / point : (open_price - current_price) / point;
 
          // Süre kontrolü
          if ((long)TimeCurrent() - (long)GetPosition().Time() >= MaxPositionDuration_s)
          {
-            Log("POZİSYON KAPANIYOR (SÜRE DOLDU): ID: " + (string)GetPosition().Ticket());
+            Log(symbol, "POZİSYON KAPANIYOR (SÜRE DOLDU): ID: " + (string)GetPosition().Ticket());
             GetTrade().PositionClose(GetPosition().Ticket());
             continue;
          }
@@ -158,7 +195,7 @@ void ManagePositions()
             double close_volume = NormalizeDouble(GetPosition().Volume() * PartialCloseVolume, 2);
             if (close_volume > 0)
             {
-               Log("POZİSYON KISMİ KAPANIYOR: ID: " + (string)GetPosition().Ticket() + ", Hacim: " + DoubleToString(close_volume, 2));
+               Log(symbol, "POZİSYON KISMİ KAPANIYOR: ID: " + (string)GetPosition().Ticket() + ", Hacim: " + DoubleToString(close_volume, 2));
                GetTrade().PositionClose(GetPosition().Ticket(), close_volume);
             }
          }
@@ -166,7 +203,7 @@ void ManagePositions()
          // Break-Even
          if (BreakEvenPips > 0 && pips >= BreakEvenPips && sl_price != open_price)
          {
-            Log("POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)GetPosition().Ticket());
+            Log(symbol, "POZİSYON BREAK-EVEN'A ÇEKİLİYOR: ID: " + (string)GetPosition().Ticket());
             GetTrade().PositionModify(GetPosition().Ticket(), open_price, tp_price);
          }
 
@@ -176,19 +213,19 @@ void ManagePositions()
             double new_sl = 0.0;
             if (GetPosition().PositionType() == POSITION_TYPE_BUY)
             {
-               new_sl = current_price - TrailingStopPips * Point;
+               new_sl = current_price - TrailingStopPips * point;
                if (new_sl > sl_price)
                {
-                  Log("TRAILING STOP GÜNCELLENDİ (BUY): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
+                  Log(symbol, "TRAILING STOP GÜNCELLENDİ (BUY): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, digits));
                   GetTrade().PositionModify(GetPosition().Ticket(), new_sl, tp_price);
                }
             }
             else // SELL
             {
-               new_sl = current_price + TrailingStopPips * Point;
+               new_sl = current_price + TrailingStopPips * point;
                if (new_sl < sl_price)
                {
-                  Log("TRAILING STOP GÜNCELLENDİ (SELL): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, Digits));
+                  Log(symbol, "TRAILING STOP GÜNCELLENDİ (SELL): ID: " + (string)GetPosition().Ticket() + ", Yeni SL: " + DoubleToString(new_sl, digits));
                   GetTrade().PositionModify(GetPosition().Ticket(), new_sl, tp_price);
                }
             }
@@ -197,113 +234,17 @@ void ManagePositions()
    }
 }
 
-//--- Manipülasyon sinyalini tespit etme (MT5)
-ENUM_ORDER_TYPE DetectManipulationSignal(double point_value, int digits)
-{
-   MqlRates rates[2];
-   if (CopyRates(Symbol(), PERIOD_CURRENT, 0, 2, rates) < 2) return((ENUM_ORDER_TYPE)-1);
-
-   double candle_high = rates[1].high;
-   double candle_low = rates[1].low;
-   double candle_open = rates[1].open;
-   double candle_close = rates[1].close;
-   double candle_body = MathAbs(candle_open - candle_close);
-   double upper_wick = candle_high - MathMax(candle_open, candle_close);
-   double lower_wick = MathMin(candle_open, candle_close) - candle_low;
-
-   // İğneli mum tespiti (Spike)
-   if (upper_wick > SpikeCandlePips * point_value && upper_wick > candle_body * 2)
-   {
-      Log("SİNYAL: Yukarı Spike Mumu Tespit Edildi. İğne: " + DoubleToString(upper_wick / point_value, 1) + " Pips.");
-      return ORDER_TYPE_SELL;
-   }
-   if (lower_wick > SpikeCandlePips * point_value && lower_wick > candle_body * 2)
-   {
-      Log("SİNYAL: Aşağı Spike Mumu Tespit Edildi. İğne: " + DoubleToString(lower_wick / point_value, 1) + " Pips.");
-      return ORDER_TYPE_BUY;
-   }
-
-   return((ENUM_ORDER_TYPE)-1);
-}
-
-//--- Skor tablosunu güncelleme (MT5)
-void UpdateTradeScore(string symbol, double profit, bool is_win)
-{
-   // MT5'te HistorySelect() ile işlem geçmişine erişim ve skor güncelleme mantığı buraya gelir.
-   // Basit bir yer tutucu bırakıyorum.
-   Log("Skor Güncellendi (MT5): Sembol: " + symbol + ", Kâr: " + DoubleToString(profit, 2));
-}
-
-//+------------------------------------------------------------------+
-//| MT5 Ana Olay Fonksiyonları                                       |
-//+------------------------------------------------------------------+
-
-// Ana dosyada tanımlanan global değişkenlere erişim için
-extern CTrade m_trade;
-extern CPositionInfo m_position;
-
-CTrade& GetTrade() { return m_trade; }
-CPositionInfo& GetPosition() { return m_position; }
-
-int OnInit_MT5()
-{
-   GetTrade().SetExpertMagicNumber(MagicNumber);
-   GetTrade().SetMarginMode();
-   GetTrade().SetTypeFillingBySymbol(Symbol());
-   SymbolSelect(Symbol(), true);
-   // Emir defteri olaylarını almak için abone ol
-   MarketBookAdd(Symbol());
-   
-   Log("EA Başlatıldı (MT5): " + Expert_ID + " v" + (string)Version());
-   return(INIT_SUCCEEDED);
-}
-
-void OnDeinit_MT5(const int reason)
-{
-   // Emir defteri aboneliğini kaldır
-   MarketBookRelease(Symbol());
-   Log("EA Durduruldu (MT5). Neden: " + (string)reason);
-}
-
-void OnTick_MT5()
-{
-   if (!IsTradingTime() || ServerBusyMode) return;
-
-   ManagePositions();
-
-   if (PositionsTotal() > 0) return;
-
-   ENUM_ORDER_TYPE signal = DetectManipulationSignal(Point, Digits);
-   if (signal != (ENUM_ORDER_TYPE)-1)
-   {
-      // MT5'e özel Emir Defteri Anomali Kontrolü
-      if (BookAnomalyDetected)
-      {
-         Log("EMİR DEFTERİ ANOMALİSİ ONAYLANDI. Sinyal Güçlendirildi.");
-      }
-      
-      double lot = CalculateLotSize(StopLossPips);
-      double price = (signal == ORDER_TYPE_BUY) ? GetAsk() : GetBid();
-      OpenTrade(signal, lot, price, StopLossPips, TakeProfitPips, "AMD Signal");
-   }
-}
-
-//+------------------------------------------------------------------+
-//| MT5 OnBookEvent Handler                                          |
-//+------------------------------------------------------------------+
-void HandleBookEvent(const string symbol, const MqlBookInfo &book[])
+//--- MT5 Emir Defteri Anomali Tespiti
+void HandleBookEvent(string symbol, const MqlBookInfo &book[])
 {
    if (symbol != Symbol()) return;
    
    // Emir defteri manipülasyonu (Spoofing/Stop Hunt) tespiti
-   static double prev_bid_volume = 0.0;
-   static double prev_ask_volume = 0.0;
+   double current_bid_volume = 0;
+   double current_ask_volume = 0;
    
-   double current_bid_volume = 0.0;
-   double current_ask_volume = 0.0;
-   
-   // En iyi fiyat (Top of Book) hacmini hesapla (Sadece ilk 5 seviye)
-   for (int i = 0; i < ArraySize(book) && i < 5; i++)
+   // Sadece en üst 5 seviyeyi kontrol et
+   for (int i = 0; i < MathMin(ArraySize(book), 5); i++)
    {
       if (book[i].type == BOOK_TYPE_BUY)
       {
@@ -315,25 +256,85 @@ void HandleBookEvent(const string symbol, const MqlBookInfo &book[])
       }
    }
    
-   // Hacim değişim yüzdesi (Ani hacim çekilmesi/eklenmesi)
-   double bid_change = (prev_bid_volume > 0) ? MathAbs(current_bid_volume - prev_bid_volume) / prev_bid_volume : 0.0;
-   double ask_change = (prev_ask_volume > 0) ? MathAbs(current_ask_volume - prev_ask_volume) / prev_ask_volume : 0.0;
-   
-   // %50'den fazla ani hacim değişimi (Spoofing/Stop Hunt denemesi)
-   if (bid_change > 0.50 || ask_change > 0.50)
+   // Basit anomali tespiti: Bir taraftaki hacim, diğerinin 5 katından fazlaysa
+   if (current_bid_volume > current_ask_volume * 5 || current_ask_volume > current_bid_volume * 5)
    {
-      Log("EMİR DEFTERİ ANOMALİSİ TESPİT EDİLDİ: Bid Hacim Değişimi: " + DoubleToString(bid_change*100, 0) + "%" + 
-          ", Ask Hacim Değişimi: " + DoubleToString(ask_change*100, 0) + "%");
-          
-      // Anomaliyi OnTick'e ilet
       BookAnomalyDetected = true;
+      Log(symbol, "DOM ANOMALİSİ TESPİT EDİLDİ: Bid Hacmi: " + DoubleToString(current_bid_volume, 0) + ", Ask Hacmi: " + DoubleToString(current_ask_volume, 0));
    }
    else
    {
       BookAnomalyDetected = false;
    }
+}
+
+//--- Ana Olay Fonksiyonları (MT5)
+
+int OnInit_MT5()
+{
+   GetTrade().SetExpertMagicNumber(MagicNumber);
+   GetTrade().SetMarginMode();
    
-   prev_bid_volume = current_bid_volume;
-   prev_ask_volume = current_ask_volume;
+   string symbols[];
+   int count = StringSplit(Symbols_List, ',', symbols);
+   
+   for (int i = 0; i < count; i++)
+   {
+      SymbolSelect(symbols[i], true);
+      // Emir defteri olaylarını almak için abone ol
+      MarketBookAdd(symbols[i]);
+   }
+   
+   Log("", "EA Başlatıldı (MT5): " + Expert_ID + " v" + (string)Version());
+   return(INIT_SUCCEEDED);
+}
+
+void OnDeinit_MT5(const int reason)
+{
+   string symbols[];
+   int count = StringSplit(Symbols_List, ',', symbols);
+   
+   for (int i = 0; i < count; i++)
+   {
+      MarketBookRelease(symbols[i]);
+   }
+   
+   Log("", "EA Durduruldu (MT5). Neden: " + (string)reason);
+}
+
+void OnTick_MT5()
+{
+   if (!IsTradingTime() || ServerBusyMode) return;
+
+   string symbols[];
+   int count = StringSplit(Symbols_List, ',', symbols);
+   
+   for (int i = 0; i < count; i++)
+   {
+      string symbol = symbols[i];
+      
+      // Sembolü seç
+      if (!SymbolSelect(symbol, true)) continue;
+      
+      ManagePositions(symbol);
+
+      // Sadece pozisyon yoksa sinyal ara
+      if (PositionsTotal() > 0) continue;
+
+      ENUM_ORDER_TYPE signal = DetectManipulationSignal(symbol);
+      
+      // MT5'e özel 3. filtre: DOM Anomali Onayı
+      if (signal != (ENUM_ORDER_TYPE)-1 && BookAnomalyDetected)
+      {
+         Log(symbol, "GÜÇLÜ SİNYAL ONAYI: DOM Anomali filtresi de geçti.");
+         double lot = CalculateLotSize(symbol, StopLossPips);
+         double price = (signal == ORDER_TYPE_BUY) ? GetAsk(symbol) : GetBid(symbol);
+         OpenTrade(symbol, signal, lot, price, StopLossPips, TakeProfitPips, "AMD Signal");
+      }
+      else if (signal != (ENUM_ORDER_TYPE)-1)
+      {
+         Log(symbol, "SİNYAL ALINDI, ancak DOM Anomali filtresi geçilemedi. İşlem açılmadı.");
+      }
+   }
 }
 
