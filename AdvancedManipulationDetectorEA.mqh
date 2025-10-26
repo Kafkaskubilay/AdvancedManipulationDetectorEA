@@ -386,6 +386,61 @@ bool DetectManipulationSignal(ENUM_ORDER_TYPE &signal_type)
 }
 
 //+------------------------------------------------------------------+
+//| MT5 için OnBookEvent Handler                                     |
+//+------------------------------------------------------------------+
+// Bu fonksiyon, MT5'teki AdvancedManipulationDetectorEA.mq5 dosyasından çağrılır.
+#ifdef __MQL5__
+// Emir defteri anomalisini OnTick'e iletmek için global değişken
+bool BookAnomalyDetected = false;
+
+void OnBookEvent(const string symbol, const MqlBookInfo &book[])
+{
+   if (symbol != _Symbol) return;
+   
+   // Emir defteri manipülasyonu (Spoofing/Stop Hunt) tespiti
+   static double prev_bid_volume = 0.0;
+   static double prev_ask_volume = 0.0;
+   
+   double current_bid_volume = 0.0;
+   double current_ask_volume = 0.0;
+   
+   // En iyi fiyat (Top of Book) hacmini hesapla (Sadece ilk 5 seviye)
+   for (int i = 0; i < ArraySize(book) && i < 5; i++)
+   {
+      if (book[i].type == BOOK_TYPE_BUY)
+      {
+         current_bid_volume += book[i].volume;
+      }
+      else if (book[i].type == BOOK_TYPE_SELL)
+      {
+         current_ask_volume += book[i].volume;
+      }
+   }
+   
+   // Hacim değişim yüzdesi (Ani hacim çekilmesi/eklenmesi)
+   double bid_change = (prev_bid_volume > 0) ? MathAbs(current_bid_volume - prev_bid_volume) / prev_bid_volume : 0.0;
+   double ask_change = (prev_ask_volume > 0) ? MathAbs(current_ask_volume - prev_ask_volume) / prev_ask_volume : 0.0;
+   
+   // %50'den fazla ani hacim değişimi (Spoofing/Stop Hunt denemesi)
+   if (bid_change > 0.50 || ask_change > 0.50)
+   {
+      Log("EMİR DEFTERİ ANOMALİSİ TESPİT EDİLDİ: Bid Hacim Değişimi: " + DoubleToString(bid_change*100, 0) + "%" + 
+          ", Ask Hacim Değişimi: " + DoubleToString(ask_change*100, 0) + "%");
+          
+      // Anomaliyi OnTick'e ilet
+      BookAnomalyDetected = true;
+   }
+   else
+   {
+      BookAnomalyDetected = false;
+   }
+   
+   prev_bid_volume = current_bid_volume;
+   prev_ask_volume = current_ask_volume;
+}
+#endif
+
+//+------------------------------------------------------------------+
 //| Ana Olay Fonksiyonları (Wrapper)                                 |
 //+------------------------------------------------------------------+
 
